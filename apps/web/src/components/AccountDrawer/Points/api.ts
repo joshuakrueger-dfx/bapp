@@ -1,14 +1,5 @@
-import {
-  MIN_LIQUIDITY_USD,
-  POINTS_PER_LIQUIDITY_DAY,
-  POINTS_PER_SWAP,
-} from 'components/AccountDrawer/Points/constants'
 import { PointsBreakdown } from 'components/AccountDrawer/Points/types'
-import {
-  LEADERBOARD_MAX_ENTRIES,
-  LeaderboardData,
-  LeaderboardEntry,
-} from 'components/AccountDrawer/Points/usePointsLeaderboard'
+import { LeaderboardData, LeaderboardEntry } from 'components/AccountDrawer/Points/usePointsLeaderboard'
 
 /**
  * Backend contract for the points service.
@@ -20,25 +11,22 @@ import {
  *   - Only count Swap events emitted by the official JuiceSwap V2/V3 routers
  *     (router-address whitelist). Custom contracts emitting fake `Swap` events
  *     must not be counted.
- *   - Only count finalized blocks (Citrea finality lag, e.g. `latest - 64`).
+ *   - Only count finalized blocks (Citrea finality lag, e.g. `latest - 32`).
  *     Reverted/uncled txs do not emit logs and therefore cannot be claimed.
- *   - Apply a minimum USD-notional per swap (e.g. ≥ $1 at swap time).
  *   - Cap points per address per 24h window to prevent micro-swap farming.
- *   - For LP points: time-weighted minimum balance ≥ MIN_LIQUIDITY_USD across
- *     a continuous 24h window in *whitelisted* JuiceSwap pools (cBTC/cUSD/JUSD).
- *   - Detect and exclude wash-trading patterns (same EOA via different routers,
- *     A→B→A round-trips, etc.).
  *
- * Expected endpoints (ponder service):
+ * Endpoints (ponder service):
  *   GET {BASE}/points/{address}      -> PointsApiResponse
  *   GET {BASE}/points/leaderboard    -> LeaderboardApiResponse
  *
- * BASE is read from REACT_APP_PONDER_JUICESWAP_URL.
- * Toggle with REACT_APP_JUICE_POINTS_API_ENABLED=true (defaults to mock).
+ * BASE comes from REACT_APP_PONDER_JUICESWAP_URL (primary, prod ponder).
+ * REACT_APP_PONDER_FALLBACK_JUICESWAP_URL (dev ponder) is tried if the
+ * primary fails — same pattern as `packages/uniswap/src/data/apiClients/ponderApi`.
  *
- * Until the backend ships these endpoints the fetchers fall back to a deterministic
- * mock (see `mockPoints` / `mockLeaderboard`) so the UI is fully functional during
- * development.
+ * On total API failure we return zeros (NOT mock random data) so the UI
+ * never lies about a wallet's standing. Set
+ * `REACT_APP_JUICE_POINTS_DEV_MOCK=true` to opt into the deterministic
+ * mock for fully offline development.
  */
 
 interface PointsApiResponse {
@@ -57,14 +45,13 @@ interface LeaderboardApiResponse {
   updatedAt: number
 }
 
-const POINTS_API_BASE = process.env.REACT_APP_PONDER_JUICESWAP_URL || ''
-const POINTS_API_ENABLED = process.env.REACT_APP_JUICE_POINTS_API_ENABLED === 'true'
+const PRIMARY_BASE = process.env.REACT_APP_PONDER_JUICESWAP_URL || 'https://ponder.juiceswap.com'
+const FALLBACK_BASE =
+  process.env.REACT_APP_PONDER_FALLBACK_JUICESWAP_URL || 'https://dev.ponder.juiceswap.com'
+const DEV_MOCK_ENABLED = process.env.REACT_APP_JUICE_POINTS_DEV_MOCK === 'true'
 const REQUEST_TIMEOUT_MS = 5_000
 
-async function safeFetch<T>(url: string): Promise<T | undefined> {
-  if (!POINTS_API_ENABLED || !POINTS_API_BASE) {
-    return undefined
-  }
+async function tryFetch<T>(url: string): Promise<T | undefined> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -80,6 +67,53 @@ async function safeFetch<T>(url: string): Promise<T | undefined> {
   }
 }
 
+async function fetchWithFallback<T>(path: string): Promise<T | undefined> {
+  for (const base of [PRIMARY_BASE, FALLBACK_BASE]) {
+    if (!base) {
+      continue
+    }
+    const result = await tryFetch<T>(`${base}${path}`)
+    if (result !== undefined) {
+      return result
+    }
+  }
+  return undefined
+}
+
+const ZERO_POINTS: PointsBreakdown = {
+  total: 0,
+  swaps: { count: 0, points: 0 },
+  liquidity: { days: 0, points: 0, currentUsdValue: 0, meetsMinimum: false },
+}
+
+export async function fetchPointsForAddress(address: string): Promise<PointsBreakdown> {
+  const apiResponse = await fetchWithFallback<PointsApiResponse>(`/points/${address.toLowerCase()}`)
+  if (apiResponse) {
+    return apiResponse
+  }
+  if (DEV_MOCK_ENABLED) {
+    return mockPoints(address)
+  }
+  return ZERO_POINTS
+}
+
+export async function fetchLeaderboard(): Promise<LeaderboardData> {
+  const apiResponse = await fetchWithFallback<LeaderboardApiResponse>('/points/leaderboard')
+  if (apiResponse) {
+    return {
+      entries: apiResponse.entries,
+      total: apiResponse.entries.length,
+      updatedAt: apiResponse.updatedAt,
+    }
+  }
+  if (DEV_MOCK_ENABLED) {
+    return mockLeaderboard()
+  }
+  return { entries: [], total: 0, updatedAt: Date.now() }
+}
+
+// ---- Optional offline-dev mock (only used when REACT_APP_JUICE_POINTS_DEV_MOCK=true) ----
+
 function pseudoRandomFromAddress(address: string, max: number): number {
   let hash = 0
   for (let i = 0; i < address.length; i++) {
@@ -92,8 +126,8 @@ function mockPoints(address: string): PointsBreakdown {
   const swapCount = pseudoRandomFromAddress(address, 25)
   const liquidityDays = pseudoRandomFromAddress(address.split('').reverse().join(''), 14)
   const currentUsdValue = liquidityDays > 0 ? 50 + (liquidityDays % 100) : 0
-  const swapPoints = swapCount * POINTS_PER_SWAP
-  const liquidityPoints = liquidityDays * POINTS_PER_LIQUIDITY_DAY
+  const swapPoints = swapCount * 100
+  const liquidityPoints = liquidityDays * 50
   return {
     total: swapPoints + liquidityPoints,
     swaps: { count: swapCount, points: swapPoints },
@@ -101,7 +135,7 @@ function mockPoints(address: string): PointsBreakdown {
       days: liquidityDays,
       points: liquidityPoints,
       currentUsdValue,
-      meetsMinimum: currentUsdValue >= MIN_LIQUIDITY_USD,
+      meetsMinimum: currentUsdValue >= 10,
     },
   }
 }
@@ -123,7 +157,7 @@ function generateMockAddress(seed: number): string {
 }
 
 function mockLeaderboard(): LeaderboardData {
-  const raw = Array.from({ length: LEADERBOARD_MAX_ENTRIES }, (_, i) => ({
+  const raw = Array.from({ length: 100 }, (_, i) => ({
     address: generateMockAddress(i + 1),
     points: Math.max(50, 12000 - i * 110 - (i % 5) * 35),
   }))
@@ -134,28 +168,4 @@ function mockLeaderboard(): LeaderboardData {
     points: entry.points,
   }))
   return { entries, total: entries.length, updatedAt: Date.now() }
-}
-
-export async function fetchPointsForAddress(address: string): Promise<PointsBreakdown> {
-  const apiResponse = await safeFetch<PointsApiResponse>(
-    `${POINTS_API_BASE}/points/${address.toLowerCase()}`,
-  )
-  if (apiResponse) {
-    return apiResponse
-  }
-  return mockPoints(address)
-}
-
-export async function fetchLeaderboard(): Promise<LeaderboardData> {
-  const apiResponse = await safeFetch<LeaderboardApiResponse>(
-    `${POINTS_API_BASE}/points/leaderboard`,
-  )
-  if (apiResponse) {
-    return {
-      entries: apiResponse.entries,
-      total: apiResponse.entries.length,
-      updatedAt: apiResponse.updatedAt,
-    }
-  }
-  return mockLeaderboard()
 }
