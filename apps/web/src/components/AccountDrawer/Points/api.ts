@@ -1,3 +1,4 @@
+import { MIN_LIQUIDITY_USD, POINTS_PER_LIQUIDITY_DAY, POINTS_PER_SWAP } from 'components/AccountDrawer/Points/constants'
 import { PointsBreakdown } from 'components/AccountDrawer/Points/types'
 import { LeaderboardData, LeaderboardEntry } from 'components/AccountDrawer/Points/usePointsLeaderboard'
 
@@ -37,6 +38,16 @@ interface PointsApiResponse {
     points: number
     currentUsdValue: number
     meetsMinimum: boolean
+  }
+  bonuses?: {
+    memeTokenCreated: boolean
+    memeTokenPoints: number
+    memeTokenGraduated: boolean
+    memeTokenGraduatedPoints: number
+    savings?: { jusdSaved: number; points: number }
+    juiceHold?: { juiceHeld: number; points: number }
+    lending?: { usdLent: number; points: number }
+    points: number
   }
 }
 
@@ -136,6 +147,13 @@ function mockPoints(address: string): PointsBreakdown {
       points: liquidityPoints,
       currentUsdValue,
       meetsMinimum: currentUsdValue >= 10,
+    },
+    bonuses: {
+      memeTokenCreated: false,
+      memeTokenPoints: 0,
+      memeTokenGraduated: false,
+      memeTokenGraduatedPoints: 0,
+      points: 0,
     },
   }
 }

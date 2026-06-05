@@ -251,6 +251,13 @@ function medalKeyForRank(rank: number): 'gold' | 'silver' | 'bronze' | 'none' {
   return 'none'
 }
 
+function toMedalRank(rank: number): MedalRank | undefined {
+  if (rank === 1 || rank === 2 || rank === 3) {
+    return rank
+  }
+  return undefined
+}
+
 function useTimeTick(intervalMs: number) {
   const [, setTick] = useState(0)
   useEffect(() => {
