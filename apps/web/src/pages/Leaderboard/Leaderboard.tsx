@@ -231,6 +231,13 @@ const PageButton = styled(Flex, {
 
 type MedalRank = 1 | 2 | 3
 
+function toMedalRank(rank: number): MedalRank | undefined {
+  if (rank === 1 || rank === 2 || rank === 3) {
+    return rank
+  }
+  return undefined
+}
+
 function medalKeyForRank(rank: number): 'gold' | 'silver' | 'bronze' | 'none' {
   if (rank === 1) {
     return 'gold'
@@ -265,8 +272,7 @@ function formatRefreshAge(updatedAt?: number): string {
 
 function PodiumEntry({ entry, isUser }: { entry: LeaderboardEntry; isUser: boolean }) {
   const medal = medalKeyForRank(entry.rank)
-  const rank = entry.rank as MedalRank
-  const rankVariant = rank <= 3 ? rank : undefined
+  const rankVariant = toMedalRank(entry.rank)
   const avatarSize = 72
   const ringSize = avatarSize + 10
   return (
