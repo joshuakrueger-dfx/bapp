@@ -1,4 +1,3 @@
-import { MIN_LIQUIDITY_USD, POINTS_PER_LIQUIDITY_DAY, POINTS_PER_SWAP } from 'components/AccountDrawer/Points/constants'
 import { PointsBreakdown } from 'components/AccountDrawer/Points/types'
 import { LeaderboardData, LeaderboardEntry } from 'components/AccountDrawer/Points/usePointsLeaderboard'
 
